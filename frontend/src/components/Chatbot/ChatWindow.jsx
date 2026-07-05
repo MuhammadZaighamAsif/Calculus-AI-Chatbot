@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { sendMessage, fetchChatHistory } from "../../services/chatApi";
 import { getContextString, getTopicContext, getPageUrl } from "../../utils/routeContext";
-import Message from "./Message";
+import Message, { MessageFeedback } from "./Message";
 import SuggestedQuestions from "./SuggestedQuestions";
 import MathSymbolPicker from "./MathSymbolPicker";
 
@@ -280,12 +280,20 @@ function ChatWindow({ onClose, onActivity }) {
               {messages.map((msg, i) => {
                 const isLast = i === messages.length - 1;
                 const isLastBot = isLast && msg.role === "assistant";
+                const showSuggestions = isLastBot && suggestions.length > 0;
                 return (
-                  <div key={msg.id ?? i}>
-                    <Message message={{ ...msg, userInitial: user?.username?.[0]?.toUpperCase() }} />
-                    {isLastBot && suggestions.length > 0 && (
+                  <div
+                    key={msg.id ?? i}
+                    className={`cb-turn${showSuggestions ? " cb-turn--with-suggestions" : ""}`}
+                  >
+                    <Message
+                      message={{ ...msg, userInitial: user?.username?.[0]?.toUpperCase() }}
+                      showFeedback={!showSuggestions}
+                    />
+                    {showSuggestions && (
                       <SuggestedQuestions suggestions={suggestions} onSelect={handleSend} disabled={isLoading} />
                     )}
+                    {showSuggestions && <MessageFeedback className="cb-msg-feedback--after-suggestions" />}
                   </div>
                 );
               })}
