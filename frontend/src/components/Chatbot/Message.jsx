@@ -45,38 +45,66 @@ function KatexSpan({ latex, displayMode }) {
     : <span ref={ref} className="cb-math-inline" />;
 }
 
-function BotMessageContent({ content }) {
-  const cleanedContent = content.replace(
-  /\[STEP\s+\d+\s+of\s+\d+\]\s*/i,
-  ""
-  );
+const STEP_LINE_RE = /^step\s+\d+[:.)]/i;
 
-  const segments = parseLatex(cleanedContent);
-  
+function cleanBotContent(content) {
+  return content
+    .replace(/\[STEP\s+\d+\s+of\s+\d+\]\s*/i, "")
+    .replace(/\[FOLLOW_UPS\][\s\S]*?\[\/FOLLOW_UPS\]/gi, "")
+    .trim();
+}
+
+function renderLatexSegments(text, keyPrefix) {
+  return parseLatex(text).map((seg, i) => {
+    if (seg.type === "text") return <span key={`${keyPrefix}-${i}`}>{seg.content}</span>;
+    if (seg.type === "inline") return <KatexSpan key={`${keyPrefix}-${i}`} latex={seg.content} displayMode={false} />;
+    if (seg.type === "block") return <KatexSpan key={`${keyPrefix}-${i}`} latex={seg.content} displayMode={true} />;
+    return null;
+  });
+}
+
+function BotMessageContent({ content }) {
+  const cleanedContent = cleanBotContent(content);
+  const blocks = cleanedContent.split(/\n\s*\n/).filter((b) => b.trim());
+
   return (
-    <div className="cb-msg-text">
-      {segments.map((seg, i) => {
-        if (seg.type === "text") {
-          return seg.content.split("\n").map((line, j, arr) => (
-            <span key={`${i}-${j}`}>
-              {line}
-              {j < arr.length - 1 && <br />}
-            </span>
-          ));
+    <div className="cb-msg-text cb-msg-text--structured">
+      {blocks.map((block, bIdx) => {
+        const lines = block.split("\n").filter((l) => l.trim());
+        const isStepList = lines.length > 1 && lines.every((l) => STEP_LINE_RE.test(l.trim()));
+
+        if (isStepList) {
+          return (
+            <ol key={bIdx} className="cb-msg-steps">
+              {lines.map((line, lIdx) => (
+                <li key={lIdx} className="cb-msg-step">
+                  {renderLatexSegments(line.replace(/^step\s+\d+[:.)]\s*/i, ""), `b${bIdx}-l${lIdx}`)}
+                </li>
+              ))}
+            </ol>
+          );
         }
-        if (seg.type === "inline") return <KatexSpan key={i} latex={seg.content} displayMode={false} />;
-        if (seg.type === "block") return <KatexSpan key={i} latex={seg.content} displayMode={true} />;
-        return null;
+
+        return (
+          <p key={bIdx} className="cb-msg-paragraph">
+            {lines.map((line, lIdx) => (
+              <span key={lIdx}>
+                {renderLatexSegments(line, `b${bIdx}-l${lIdx}`)}
+                {lIdx < lines.length - 1 && <br />}
+              </span>
+            ))}
+          </p>
+        );
       })}
     </div>
   );
 }
 
-function MessageFeedback() {
+function MessageFeedback({ className = "" }) {
   const [feedback, setFeedback] = useState(null);
 
   return (
-    <div className="cb-msg-feedback">
+    <div className={`cb-msg-feedback${className ? ` ${className}` : ""}`}>
       <button
         type="button"
         className={`cb-feedback-btn${feedback === "like" ? " cb-feedback-btn--active-like" : ""}`}
@@ -103,7 +131,7 @@ function MessageFeedback() {
   );
 }
 
-function Message({ message }) {
+function Message({ message, showFeedback = true }) {
   const isUser = message.role === "user";
   const isError = message.role === "error";
   const isBot = !isUser && !isError;
@@ -185,9 +213,10 @@ function Message({ message }) {
           </div>
         )}
       </div>
-      {isBot && <MessageFeedback />}
+      {isBot && showFeedback && <MessageFeedback />}
     </div>
   );
 }
 
+export { MessageFeedback };
 export default Message;
