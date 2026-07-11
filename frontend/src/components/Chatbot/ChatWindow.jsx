@@ -538,12 +538,12 @@ function ChatWindow({ onClose, onActivity }) {
                       showFeedback={!showSuggestions}
                       messageId={msg.messageId}  // CB-12: pass for feedback
                       sessionId={msg.sessionId}  // CB-12: pass for feedback
-                      userToken={token}          // CB-12: for feedback submission
+                      userToken={user?.accessToken}  // CB-12: for feedback submission
                     />
                     {showSuggestions && (
                       <SuggestedQuestions suggestions={suggestions} onSelect={handleSend} disabled={isLoading} />
                     )}
-                    {showSuggestions && <MessageFeedback className="cb-msg-feedback--after-suggestions" messageId={msg.messageId} sessionId={msg.sessionId} userToken={token} />}
+                    {showSuggestions && <MessageFeedback className="cb-msg-feedback--after-suggestions" messageId={msg.messageId} sessionId={msg.sessionId} userToken={user?.accessToken} />}
                   </div>
                 );
               })}
