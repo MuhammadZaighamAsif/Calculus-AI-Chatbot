@@ -492,7 +492,7 @@ async def ask_mock_stream(
 ):
     """
     Streaming version of the mock response, for testing without
-    burning OpenAI/Grok API credits. Yields word-by-word.
+    burning Grok API credits. Yields word-by-word.
     
     CB-13: Includes session summary in output if provided.
     """

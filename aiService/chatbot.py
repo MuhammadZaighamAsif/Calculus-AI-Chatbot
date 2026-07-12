@@ -8,6 +8,7 @@ import json
 from aiService.services.llm_client import ask_llm, ask_llm_stream
 
 # Configure logging
+#logging
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
@@ -15,7 +16,6 @@ app = FastAPI(
     description="Backend API service for the CalcVoyager AI chatbot",
     version="1.0.0"
 )
-
 
 class ChatRequest(BaseModel):
     message: str
