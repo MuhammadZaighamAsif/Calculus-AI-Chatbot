@@ -492,7 +492,7 @@ async def ask_mock_stream(
 ):
     """
     Streaming version of the mock response, for testing without
-    burning OpenAI/Grok API credits. Yields word-by-word.
+    burning Grok API credits. Yields word-by-word.
     
     CB-13: Includes session summary in output if provided.
     """
@@ -668,6 +668,7 @@ SUMMARY_PROMPT = """Compress this calculus tutoring conversation into a 3-5 sent
 running summary. Note topics covered, where the student struggled, and what
 was already explained. Do not include LaTeX or follow-up suggestions."""
 
+#summarize history function
 async def summarize_history(messages: list, previous_summary: str = "") -> str:
     content = f"Previous summary: {previous_summary}\n\n" if previous_summary else ""
     content += "\n".join(f"{m['role']}: {m['content']}" for m in messages)

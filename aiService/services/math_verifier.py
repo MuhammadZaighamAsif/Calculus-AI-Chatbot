@@ -27,7 +27,7 @@ def detect_variables_in_question(question: str) -> list:
             variables.append(var)
     return variables or ['x']
 
-
+# parse operation function
 def parse_operation(question: str) -> Tuple[str, str, Optional[str]]:
     """Detect the math operation and extract the expression."""
     question_lower = question.lower()
