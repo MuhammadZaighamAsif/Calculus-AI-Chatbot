@@ -17,31 +17,19 @@ USE_MOCK = os.getenv("USE_MOCK", "True").lower() == "true"
 
 # ─────────────────────────────────────────────────────────────
 # CB-20: Model Fallback & Response Caching — configuration
-# All tunables are env-driven with safe defaults, so nothing here
-# requires touching .env to work out of the box.
 # ─────────────────────────────────────────────────────────────
-
-# No real secondary provider is configured (no OpenAI key permitted for
-# this project). On primary failure or an open circuit, we degrade to
-# the existing mock response generator (ask_mock/ask_mock_stream) instead
-# of a second paid API — still satisfies "always return an answer," just
-# without a second real LLM behind it.
 FALLBACK_MODE = "mock_degrade"
-
-# How long the primary call is allowed to hang before we treat it as
-# a failure and hand off to fallback.
 PRIMARY_TIMEOUT_SECONDS = float(os.getenv("PRIMARY_TIMEOUT_SECONDS", "12"))
-
-# Response cache: short-TTL, in-memory, keyed by message+topic+difficulty.
-LLM_CACHE_TTL_SECONDS = int(os.getenv("LLM_CACHE_TTL_SECONDS", "300"))  # 5 min
-
-# Circuit breaker: opens after N consecutive primary failures, stays
-# open for RESET_SECONDS before allowing a half-open trial request.
+LLM_CACHE_TTL_SECONDS = int(os.getenv("LLM_CACHE_TTL_SECONDS", "300"))
 CIRCUIT_FAILURE_THRESHOLD = int(os.getenv("CIRCUIT_FAILURE_THRESHOLD", "3"))
 CIRCUIT_RESET_SECONDS = int(os.getenv("CIRCUIT_RESET_SECONDS", "60"))
+
 # ─────────────────────────────────────────────────────────────
-# CAL SYSTEM PROMPT — v3
+# CAL SYSTEM PROMPT — v4 (T6 revision)
 # Designed by: AI & Prompt Engineering (Team Theta)
+# Changes from v3: stricter anti-hallucination clause, mandatory
+# machine-checkable \boxed{} answer format tied to the SymPy
+# verifier (CB-16), and an explicit LaTeX-syntax self-check step.
 # ─────────────────────────────────────────────────────────────
 
 CAL_SYSTEM_PROMPT = """
@@ -61,6 +49,29 @@ IDENTITY & TONE
 - Your tone does not change based on the student's frustration
   level or behavior. Patience is unconditional. Your fifth
   explanation of the same concept is as warm as your first.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ANTI-HALLUCINATION RULES (STRICT — highest priority)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- NEVER state a numeric or symbolic result you have not derived
+  step-by-step in this response. If you cannot derive it, say so
+  instead of guessing.
+- NEVER invent a theorem, rule, or formula name. If unsure whether
+  a rule applies, derive from first principles instead.
+- NEVER round or simplify a final answer in a way that changes its
+  value. Show the exact simplified form.
+- If a problem is ambiguous (missing bounds, unclear variable of
+  differentiation, etc.), ask ONE clarifying question rather than
+  assuming — an assumed problem is not the student's problem.
+- Every problem-solving response's final answer MUST be wrapped in
+  \\boxed{...} using plain, machine-parseable math syntax inside the
+  box (e.g. \\boxed{3*x**2 + 2*y}, NOT \\boxed{\\text{three x squared}}).
+  This box is machine-checked against an independent SymPy
+  computation — an unparseable or missing box is treated as a
+  failure, so precision here is mandatory, not optional.
+- Do not present a claim as fact if you are not certain it is
+  mathematically correct. Uncertainty must be surfaced to the
+  student, never hidden behind confident phrasing.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INTERNAL REASONING PROTOCOL (CHAIN-OF-THOUGHT)
@@ -84,17 +95,22 @@ STEP B — Check scope:
   [ ] Out of scope           → decline warmly
 
 STEP C — Verify the math (problem-solving only):
-  Work through the full solution privately before writing
-  a single student-facing step. Verify the final answer.
-  Only after verifying: write the student response.
+  Work through the full solution privately, one calculus rule at
+  a time, before writing a single student-facing step. Re-derive
+  the final answer a second, independent way if possible (e.g.
+  check a derivative by re-differentiating an antiderivative).
+  Only write the student response after both derivations agree.
+  If they disagree, redo the work — do not report either result.
 
 STEP D — Plan the LaTeX:
   List every expression needing LaTeX formatting.
-  Confirm each uses $...$ or $$...$$ correctly.
+  For each: confirm delimiters are balanced ($...$ or $$...$$),
+  every \\frac{}{}, \\sqrt{}, \\boxed{} has matched braces, and no
+  LaTeX command is left incomplete (e.g. a dangling backslash).
 
 STEP E — Check response structure:
   Steps numbered and verb-labeled?
-  Final answer in display LaTeX?
+  Final answer in boxed display LaTeX with plain-syntax box body?
   Interpretation sentence present?
   Comprehension check or follow-up present?
 
@@ -146,6 +162,11 @@ ALL mathematical expressions must be in LaTeX. No exceptions.
 - Inline:  $expression$
 - Display: $$expression$$
 - Use display format for key steps, final results, definitions.
+- Every opened delimiter must be closed on the same line or block:
+  no unmatched $ or $$, no unmatched braces inside \\frac{}{},
+  \\sqrt{}, \\boxed{}, \\langle...\\rangle.
+- The final boxed answer must ALSO be plain-syntax parseable
+  (see ANTI-HALLUCINATION RULES) even though it renders as LaTeX.
 
 NEVER write: "the derivative is 2x"
 ALWAYS write: "the derivative is $2x$"
@@ -164,7 +185,7 @@ PROBLEM-SOLVING:
 1. Restate the problem
 2. Name the method
 3. Numbered verb-labeled steps with intermediate LaTeX
-4. Final answer in boxed display LaTeX
+4. Final answer in boxed display LaTeX ($$\\boxed{...}$$)
 5. One sentence interpreting what the answer means
 6. Follow-up invitation
 
@@ -210,17 +231,18 @@ When present:
 THINGS YOU MUST NEVER DO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Give a final answer without showing full working
+- Give a final answer that is not wrapped in a parseable \\boxed{}
 - Write math in plain text
 - Answer questions unrelated to calculus
 - Be dismissive or impatient
 - Fabricate theorems or results
+- State a result you have not independently re-checked
 - Work backwards from a result — always derive forward
 - Write walls of text
 """
 
 # ─────────────────────────────────────────────────────────────
-# CB-18: Adaptive difficulty guidance, layered on top of the
-# base system prompt depending on the student's tracked history.
+# CB-18: Adaptive difficulty guidance
 # ─────────────────────────────────────────────────────────────
 DIFFICULTY_GUIDANCE = {
     "beginner": (
@@ -266,31 +288,16 @@ client = AsyncOpenAI(
     base_url="https://api.x.ai/v1"
 )
 
-# Note: no secondary provider client. Fallback below calls ask_mock /
-# ask_mock_stream directly instead of a second real API.
-
 
 # ─────────────────────────────────────────────────────────────
 # CB-20: Circuit breaker
 # ─────────────────────────────────────────────────────────────
-
 class CircuitBreaker:
-    """
-    Three-state circuit breaker (closed -> open -> half-open) guarding
-    the primary provider call.
-
-    Opens after `failure_threshold` consecutive failures, so once a
-    provider is down we stop burning the full timeout budget on every
-    single request and go straight to fallback instead. After
-    `reset_seconds`, one trial request is allowed through (half-open);
-    success closes the circuit again, failure re-opens it.
-    """
-
     def __init__(self, failure_threshold: int, reset_seconds: int):
         self.failure_threshold = failure_threshold
         self.reset_seconds = reset_seconds
         self.failure_count = 0
-        self.state = "closed"  # closed | open | half_open
+        self.state = "closed"
         self.opened_at = None
 
     def record_success(self):
@@ -319,7 +326,6 @@ class CircuitBreaker:
                 logging.info("CIRCUIT_BREAKER: reset window elapsed, trying half-open request")
                 return True
             return False
-        # half_open: allow the single trial request through
         return True
 
 
@@ -331,12 +337,8 @@ _primary_circuit = CircuitBreaker(
 
 # ─────────────────────────────────────────────────────────────
 # CB-20: Response cache
-# In-memory, short-TTL, keyed on the exact question + topic +
-# difficulty. Wraps ask_llm/ask_llm_stream so it works the same way
-# whether USE_MOCK is on or off.
 # ─────────────────────────────────────────────────────────────
-
-_response_cache: dict = {}  # cache_key -> (expires_at_monotonic, response_text)
+_response_cache: dict = {}
 
 
 def _cache_key(message: str, topic: str, difficulty: str) -> str:
@@ -360,22 +362,14 @@ def _cache_set(key: str, value: str):
 
 
 def _build_messages(message: str, topic: str, difficulty: str, history: list, summary: str = "") -> list:
-    """Shared message-array builder used by both the sync and streaming
-    primary/fallback calls, so system prompt + history handling can't drift
-    between them.
-    
-    CB-13: If a session summary is provided, inject it as a system-level note
-    ahead of the recent turns so the model can see the earlier context.
-    """
     messages = [{"role": "system", "content": _build_system_content(topic, difficulty)}]
-    
-    # CB-13: Inject session summary as a note before history
+
     if summary and summary.strip():
         messages.append({
             "role": "system",
             "content": f"Earlier in this session: {summary}"
         })
-    
+
     history = history[-10:] if history and len(history) > 10 else (history or [])
     for item in history:
         messages.append({"role": item["role"], "content": item["content"]})
@@ -390,10 +384,6 @@ async def ask_mock(
     difficulty: str = "intermediate",
     summary: str = ""
 ):
-    """
-    Mock AI response for testing without OpenAI.
-    """
-
     if history is None:
         history = []
 
@@ -422,15 +412,6 @@ async def ask_openai(
     difficulty: str = "intermediate",
     summary: str = ""
 ):
-    """
-    Send request to the primary provider (xAI/Grok), degrading to the
-    mock response generator (CB-20) on timeout, error, or when the
-    circuit breaker is open due to recent repeated failures. No second
-    paid provider is used.
-    
-    CB-13: Includes session summary as a system note if provided.
-    """
-
     if history is None:
         history = []
 
@@ -439,7 +420,6 @@ async def ask_openai(
     served_by = "primary"
     response_content = None
 
-    # ── Primary call (xAI/Grok), gated by the circuit breaker ────────
     if _primary_circuit.allow_request():
         try:
             response = await asyncio.wait_for(
@@ -459,7 +439,6 @@ async def ask_openai(
     else:
         logging.info("CIRCUIT_BREAKER: open, skipping primary call and degrading to mock")
 
-    # ── Fallback (CB-20): degrade to mock, no second paid provider ────
     if response_content is None:
         served_by = "fallback_mock"
         response_content = await ask_mock(message, topic, history, difficulty, summary)
@@ -467,20 +446,23 @@ async def ask_openai(
     logging.info(f"LLM_RESPONSE_SOURCE: served_by={served_by} model={'grok-3-mini' if served_by == 'primary' else 'mock'}")
 
     # CB-8: Scope violation detection
+    # Widened to match every topic in the SCOPE section of the system
+    # prompt (added: continuity, linearization, chain rule, directional).
     calculus_keywords = [
         "derivative", "integral", "gradient", "limit", "vector",
         "lagrange", "taylor", "partial", "curl", "divergence",
-        "multivariable", "calculus", "differentiate", "integrate"
+        "multivariable", "calculus", "differentiate", "integrate",
+        "continuity", "continuous", "linearization", "chain rule",
+        "directional", "tangent plane", "constrained optimization"
     ]
-    
+
     has_calculus_keyword = any(kw in message.lower() for kw in calculus_keywords)
     has_cal_refusal = "I'm Cal" in response_content
-    
+
     if not has_cal_refusal and not has_calculus_keyword:
         logging.warning(f"SCOPE_VIOLATION: possible off-topic response for message: {message[:80]}")
-    
-    return response_content
 
+    return response_content
 
 
 async def ask_mock_stream(
@@ -490,12 +472,6 @@ async def ask_mock_stream(
     difficulty: str = "intermediate",
     summary: str = ""
 ):
-    """
-    Streaming version of the mock response, for testing without
-    burning Grok API credits. Yields word-by-word.
-    
-    CB-13: Includes session summary in output if provided.
-    """
     import asyncio
 
     if history is None:
@@ -523,18 +499,6 @@ async def ask_openai_stream(
     difficulty: str = "intermediate",
     summary: str = ""
 ):
-    """
-    Streaming version of ask_openai. Yields text chunks as they arrive.
-
-    CB-20: gated by the same circuit breaker as ask_openai, and falls
-    back to the secondary provider if the primary fails before any
-    tokens are sent. If the primary fails *mid-stream* (after the
-    student has already seen partial output), we stop rather than
-    splice in a second provider's tokens — the partial answer plus
-    the caller's own error handling (chatbot.py) is the safer outcome.
-    
-    CB-13: Includes session summary in the message context if provided.
-    """
     if history is None:
         history = []
 
@@ -568,14 +532,10 @@ async def ask_openai_stream(
             _primary_circuit.record_failure()
             logging.warning(f"PRIMARY_PROVIDER_FAILURE (stream): {type(e).__name__}: {str(e)}")
             if got_any_token:
-                # Already streamed partial content to the client; do not
-                # attempt to resume via a different provider mid-answer.
                 return
     else:
         logging.info("CIRCUIT_BREAKER: open, skipping primary stream and degrading to mock")
 
-    # ── Fallback (CB-20): degrade to mock stream, no second paid provider ──
-    # Only reached if the primary failed before any tokens were sent.
     logging.info("LLM_RESPONSE_SOURCE: served_by=fallback_mock (stream)")
     async for chunk in ask_mock_stream(message, topic, history, difficulty, summary):
         yield chunk
@@ -588,18 +548,6 @@ async def ask_llm_stream(
     difficulty: str = "intermediate",
     summary: str = ""
 ):
-    """
-    Streaming counterpart to ask_llm.
-    Switches between mock and real streaming based on USE_MOCK,
-    same pattern as the existing non-streaming ask_llm().
-
-    CB-20: checks the response cache first. On a hit, replays the
-    cached text word-by-word (so the client still sees a stream) with
-    no provider call at all. On a miss, streams normally and caches
-    the assembled full text for next time.
-    
-    CB-13: Includes session summary in the message context if provided.
-    """
     cache_key = _cache_key(message, topic, difficulty)
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -630,15 +578,6 @@ async def ask_llm(
     difficulty: str = "intermediate",
     summary: str = ""
 ):
-    """
-    Main function used by chatbot.py.
-    Switches between mock and OpenAI.
-
-    CB-20: checks the response cache first (exact message+topic+difficulty
-    match, short TTL). On a hit, returns immediately with no provider call.
-    
-    CB-13: Includes session summary in the message context if provided.
-    """
     cache_key = _cache_key(message, topic, difficulty)
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -646,29 +585,19 @@ async def ask_llm(
         return cached
 
     if USE_MOCK:
-        result = await ask_mock(
-            message,
-            topic,
-            history,
-            difficulty,
-            summary
-        )
+        result = await ask_mock(message, topic, history, difficulty, summary)
     else:
-        result = await ask_openai(
-            message,
-            topic,
-            history,
-            difficulty,
-            summary
-        )
+        result = await ask_openai(message, topic, history, difficulty, summary)
 
     _cache_set(cache_key, result)
     return result
+
+
 SUMMARY_PROMPT = """Compress this calculus tutoring conversation into a 3-5 sentence
 running summary. Note topics covered, where the student struggled, and what
 was already explained. Do not include LaTeX or follow-up suggestions."""
 
-#summarize history function
+
 async def summarize_history(messages: list, previous_summary: str = "") -> str:
     content = f"Previous summary: {previous_summary}\n\n" if previous_summary else ""
     content += "\n".join(f"{m['role']}: {m['content']}" for m in messages)
