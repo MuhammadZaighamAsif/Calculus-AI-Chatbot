@@ -9,6 +9,68 @@ from typing import Optional, Dict, Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
+import asyncio, json, time
+from typing import AsyncGenerator
+from fastapi import Request, APIRouter
+from fastapi.responses import StreamingResponse
+
+router = APIRouter()
+
+FLUSH_INTERVAL = 0.03
+HEARTBEAT_INTERVAL = 15.0
+MAX_QUEUE = 1000
+
+def sse_format(data: str, event: str | None = None) -> str:
+    lines = data.split("\n")
+    payload = "\n".join(f"data: {line}" for line in lines)
+    prefix = f"event: {event}\n" if event else ""
+    return f"{prefix}{payload}\n\n"
+
+async def stream_chat(prompt: str, request: Request) -> AsyncGenerator[str, None]:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE)
+    producer_task = asyncio.create_task(real_token_producer(prompt, queue))  # from aiService
+    last_flush = time.monotonic()
+    buffer: list[str] = []
+    done = False
+    try:
+        while not done:
+            if await request.is_disconnected():
+                producer_task.cancel()
+                break
+            timeout = max(0.0, FLUSH_INTERVAL - (time.monotonic() - last_flush))
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=timeout or FLUSH_INTERVAL)
+                if item is None:
+                    done = True
+                else:
+                    buffer.append(item)
+            except asyncio.TimeoutError:
+                pass
+            now = time.monotonic()
+            if buffer and (now - last_flush >= FLUSH_INTERVAL or done):
+                chunk = "".join(buffer); buffer.clear(); last_flush = now
+                yield sse_format(json.dumps({"delta": chunk}), event="message")
+            elif not buffer and (now - last_flush) >= HEARTBEAT_INTERVAL:
+                last_flush = now
+                yield ": heartbeat\n\n"
+        yield sse_format(json.dumps({"done": True}), event="done")
+    finally:
+        if not producer_task.done():
+            producer_task.cancel()
+
+@router.post("/chat/stream")
+async def chat_stream(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    return StreamingResponse(
+        stream_chat(prompt, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 # from auth_utils import require_user
 from backend.app.auth.auth_utils import require_user
@@ -19,6 +81,7 @@ from backend.app.database.db import (
     get_topic_progress, get_all_topic_progress,  # CB-18
     record_topic_message, record_topic_feedback,  # CB-18
 )
+    
 
 # Configuration for aiService
 AI_SERVICE_URL = "http://127.0.0.1:8001"  # aiService chatbot.py runs on port 8001
