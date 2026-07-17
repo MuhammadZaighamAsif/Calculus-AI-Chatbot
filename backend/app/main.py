@@ -10,20 +10,30 @@ from starlette.responses import JSONResponse
 
 from backend.app.routes import chat
 
+# ✅ SECURITY ARCHITECT UPDATE: Define allowed domains explicitly.
+# Replace the placeholder production URL with your team's final deployed domain.
+ALLOWED_ORIGINS = [
+    "https://your-calculus-website.com",  # Production domain
+    "http://localhost:3000",              # Local React development mapping
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",              # Local Vite development mapping
+    "http://127.0.0.1:5173"
+]
+
 # CORS middleware configuration
 middleware = [
     Middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=ALLOWED_ORIGINS, # ✅ Restricting allow_origins to specified domains
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"], # ✅ Locked down from ["*"] to required API methods
+        allow_headers=["Content-Type", "Authorization"], # ✅ Explicitly defining safe headers
     )
 ]
 
 # Application
 app = Starlette(
-    debug=True,
+    debug=False, # ✅ SECURITY ARCHITECT UPDATE: Disabled debug mode to prevent data leaks in production
     middleware=middleware,
     routes=[
         Mount("/api/chat", routes=chat.routes),
