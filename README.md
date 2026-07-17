@@ -14,7 +14,7 @@ mkdir -p aiService/services
 echo "GROK_API_KEY=your_key_here\nUSE_MOCK=False" > aiService/services/.env
 
 # Frontend
-cd frontend && npm install
+cd frontend && npm install --force
 ```
 
 **Run (3 terminals):**
