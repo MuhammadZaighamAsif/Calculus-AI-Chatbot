@@ -5,7 +5,7 @@ import logging
 import re
 import json
 
-from aiService.services.llm_client import ask_llm, ask_llm_stream
+from aiService.services.llm_client import ask_llm, ask_llm_stream, summarize_history
 
 # Configure logging
 #logging
